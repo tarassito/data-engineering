@@ -4,3 +4,7 @@ To start the application execute code below in the same directory with docker-co
 
 To stop the application and clean after:  
 `docker compose down --rmi all`
+
+Test requests:  
+`curl -X GET 127.0.0.1:5000`  
+`curl -X POST  127.0.0.1:5000 -d "msg=msg1"`  
