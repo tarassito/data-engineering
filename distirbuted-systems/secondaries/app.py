@@ -10,7 +10,7 @@ def result():
     if request.method == 'GET':
         return ','.join(memory_list)
     elif request.method == 'POST':
-        time.sleep(3)
+        # time.sleep(3)
         new_msg = request.form['msg']
         memory_list.append(new_msg)
         return 'New msg added'

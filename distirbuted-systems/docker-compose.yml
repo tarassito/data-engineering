@@ -1,13 +1,13 @@
 version: "3.9"
 services:
   master-container:
-    build: /master
+    build: master
     image: master-img
     ports:
       - "5000:5000"
     container_name: master-container
   secondaries-container-1:
-    build: /secondaries
+    build: secondaries
     image: secondaries-img
     ports:
       - "5001:5000"
