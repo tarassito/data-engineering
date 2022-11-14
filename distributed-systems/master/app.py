@@ -1,31 +1,56 @@
 import asyncio
 import logging
+from threading import Thread, Lock
 
 from aiohttp import ClientSession, ClientResponse
 from flask import Flask, request
 
+from count_down_latch import CountDownLatch
+
 app = Flask(__name__)
 app.logger.setLevel(logging.INFO)
 
-secondaries = ['secondaries-container-1', 'secondaries-container-2']
+
+thread_lock = Lock()
+SECONDARIES = ['secondaries-container-1', 'secondaries-container-2']
 memory_list = []
+counter = -1
 
 
 def get_messages(memory_list):
-    app.logger.info('GET method was called.')
-    return ','.join(memory_list)
+    app.logger.info(f'GET method was called.')
+    index = min([
+        count for count, item in enumerate(memory_list)
+        if count != item[0]],
+        default=len(memory_list))
+
+    return ','.join([msg[1] for msg in memory_list[:index]])
 
 
-def create_tasks(session, secondaries, msg):
+def save_msg(new_msg, memory_list, latch):
+    memory_list.append(new_msg)
+    memory_list.sort(key=lambda x: x[0])
+    latch.count_down()
+
+
+async def post(session, node, msg, latch):
+    app.logger.info(f'Sending request to {node} with msg - {msg}')
+    async with session.post(f'http://{node}:5000', json={'msg': msg}) as resp:
+        latch.count_down()
+        app.logger.info(f'Response received from {node}')
+        return resp
+
+
+def create_tasks(session, msg, latch):
     tasks = []
-    for node in secondaries:
-        tasks.append(session.post(f'http://{node}:5000', data={'msg': msg}))
+    for node in SECONDARIES:
+        tasks.append(post(session, node, msg, latch))
     return tasks
 
 
-async def send_request(secondaries, msg):
+async def send_request(msg, latch):
     async with ClientSession() as session:
-        tasks = create_tasks(session, secondaries, msg)
+        tasks = create_tasks(session, msg, latch)
         responses = await asyncio.gather(*tasks, return_exceptions=True)
 
         responses_without_exceptions = [res for res in responses if isinstance(res, ClientResponse)]
@@ -34,17 +59,8 @@ async def send_request(secondaries, msg):
     return [res.ok for res in responses_without_exceptions]
 
 
-def add_message(request):
-    app.logger.info('POST method starts ... ')
-
-    new_msg = request.form['msg']
-    memory_list.append(new_msg)
-    msg_saved_successfully = 1
-
-    result = asyncio.run(send_request(secondaries, new_msg))
-    msg_saved_successfully += sum(result)
-
-    return msg_saved_successfully
+def background_task(new_msg, latch):
+    asyncio.run(send_request(new_msg, latch))
 
 
 @app.route("/", methods=['POST', 'GET'])
@@ -53,14 +69,27 @@ def main():
         return get_messages(memory_list)
 
     elif request.method == 'POST':
-        nodes_with_new_msg = add_message(request)
-        if nodes_with_new_msg == len(secondaries) + 1:
-            app.logger.info('POST method finished successfully.')
-            return f'New message was added to all nodes'
-        else:
-            app.logger.info(
-                f'POST method finished unsuccessfully. Message was delivered to {nodes_with_new_msg} nodes')
-            return f'Message was delivered only to {nodes_with_new_msg} nodes'
+        global counter
+        with thread_lock:
+            counter += 1
+
+        write_concern = int(request.form['w'])
+        new_msg = (counter, request.form['msg'])
+        app.logger.info(f'POST method starts with write concern - {write_concern} and msg - {new_msg}')
+
+        if new_msg[1] in [v[1] for v in memory_list]:
+            return f'New message is duplicated'
+
+        latch = CountDownLatch(write_concern)
+        save_msg(new_msg, memory_list, latch)
+
+        thread = Thread(target=background_task, args=[new_msg, latch], daemon=True)
+        thread.start()
+
+        latch.wait()
+
+        app.logger.info(f'POST method with msg - {new_msg} finished.')
+        return f'New message was added'
 
 
 if __name__ == '__main__':

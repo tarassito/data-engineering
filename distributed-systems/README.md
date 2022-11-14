@@ -6,5 +6,5 @@ To stop the application and clean after:
 `docker compose down --rmi all`
 
 Test requests:  
-`curl -X GET 127.0.0.1:5000`  
-`curl -X POST  127.0.0.1:5000 -d "msg=msg1"`  
+`curl -X GET 127.0.0.1:5000` (port 5000 for master container, for secondaries - 5001, 5002)
+`curl -X POST  127.0.0.1:5000 -d "msg=msg1&w=2"`  
